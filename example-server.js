@@ -8,7 +8,13 @@ const sharedKey = Buffer.from('12abf5a9165201b0d5f284d7d902f57b19ca0a6f974bcd8fc
 const server = new Server({ port: 3000 })
 
 server.on('connection', (socket) => {
-  global.bob = shh.connect(sharedKey, { connect: () => socket })
+  global.bob = shh.connect(sharedKey, {
+    connect: () => socket,
+    capabilities: [
+      Buffer.from('4a0d23babe9e616a66e21fe8a2377f6c8c1b885bb941211eb3a75505032057f6', 'hex'),
+      Buffer.from('09398de3daad336ec736af462388297d8abd7fe621168c35a4ec2a53b327c816', 'hex'),
+    ]
+  })
 
   bob.on('handshake', () => {
     console.log('bob handshake')

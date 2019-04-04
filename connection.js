@@ -7,6 +7,7 @@ const debug = require('debug')('secret-handshake-over-hypercore:connection')
 const pump = require('pump')
 const ram = require('random-access-memory')
 
+const $hasHandshake = Symbol('hasHandshake')
 const $receiver = Symbol('receiver')
 const $reading = Symbol('reading')
 const $counter = Symbol('counter')
@@ -47,9 +48,34 @@ class Connection extends Duplex {
 
     this.sharedKey = opts.sharedKey
 
+    if (Array.isArray(opts.capabilities)) {
+      this.capabilities = opts.capabilities
+    } else {
+      this.capabilities = []
+    }
+
+    for (let i = 0; i < this.capabilities.length; ++i) {
+      if (!this.capabilities[i]) {
+        delete this.capabilities[i]
+      }
+
+      if ('string' === typeof this.capabilities[i]) {
+        this.capabilities[i] = Buffer.from(this.capabilities[i])
+      }
+
+      if (false === Buffer.isBuffer(this.capabilities[i])) {
+        this.capabilities[i] = Buffer.from(this.capabilities[i])
+      }
+    }
+
     this.remoteNonce = null
     this.nonce = null
 
+    this.capabilities = this.capabilities
+      .filter(Buffer.isBuffer)
+      .sort(Buffer.compare)
+
+    this[$hasHandshake] = false
     this[$receiver] = null
     this[$reading] = false
     this[$counter] = 0
@@ -70,10 +96,10 @@ class Connection extends Duplex {
     this.feed.ready(() => {
       this.emit('feed', this.feed)
     })
+  }
 
-    this.sender.ready(() => {
-      this.emit('sender', this.sender)
-    })
+  get hasHandshake() {
+    return this[$hasHandshake]
   }
 
   get reading() {
@@ -143,7 +169,6 @@ class Connection extends Duplex {
       })
 
       this[$stream] = stream
-
       this[$receiver] = this.createHypercore('receiver', remotePublicKey, {
         storageCacheSize: 0,
         sparse: true
@@ -235,6 +260,7 @@ class Connection extends Duplex {
 
       this.auth()
       this.once('data', (buf) => {
+        const capabilities = Buffer.concat(this.capabilities)
         const nonce = this.remoteNonce
         const key = Buffer.concat([
           this.sharedKey,
@@ -265,7 +291,8 @@ class Connection extends Duplex {
           crypto.blake2b(crypto.curve25519.shared(
             this.remoteSessionPublicKey,
             this.sessionPublicKey
-          ))
+          )),
+          capabilities
         ])
 
         verified = crypto.ed25519.verify(signature, proof, remotePublicKey)
@@ -367,12 +394,13 @@ class Connection extends Duplex {
           })
 
           pending.end(() => {
-            this.emit('handshake')
+            this[$hasHandshake] = true
             this[$counter] = 0
+
+            this.emit('handshake')
             this.resume()
             this.uncork()
             this.startReading()
-
           })
         })
       })
@@ -408,13 +436,15 @@ class Connection extends Duplex {
       nonce,
     } = this
 
+    const capabilities = Buffer.concat(this.capabilities)
     const proof = Buffer.concat([
       sharedKey,
       remotePublicKey,
       crypto.blake2b(crypto.curve25519.shared(
         this.sessionPublicKey,
         this.remoteSessionPublicKey,
-      ))
+      )),
+      capabilities
     ])
 
     const signature = crypto.ed25519.sign(proof, secretKey)
@@ -429,7 +459,6 @@ class Connection extends Duplex {
         this.sessionPublicKey,
         this.remotePublicKey
       ),
-
     ])
 
     const box = crypto.box(auth, { nonce, key })
