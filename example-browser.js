@@ -1,4 +1,5 @@
 const Socket = require('simple-websocket')
+const crypto = require('ara-crypto')
 const pump = require('pump')
 const shh = require('./')
 
@@ -9,6 +10,7 @@ socket.on('connect', () => {
   global.alice = shh.connect(sharedKey, {
     connect: () => socket,
     capabilities: [
+      shh.capability('can execute program'),
       Buffer.from('4a0d23babe9e616a66e21fe8a2377f6c8c1b885bb941211eb3a75505032057f6', 'hex'),
       Buffer.from('09398de3daad336ec736af462388297d8abd7fe621168c35a4ec2a53b327c816', 'hex'),
     ],
@@ -16,7 +18,6 @@ socket.on('connect', () => {
 
   alice.on('handshake', () => {
     console.log('alice handshake')
-    alice.name = 'alice'
     alice.write('hello bob')
     alice.on('readable', () => {
       console.log('%s', alice.read().toString())

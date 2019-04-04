@@ -276,7 +276,6 @@ class Connection extends Duplex {
 
         const unboxed = crypto.unbox(buf, { key, nonce })
         const remotePublicKey = unboxed.slice(0, 32)
-        const signature = unboxed.slice(32)
 
         if (0 !== Buffer.compare(this.remotePublicKey, remotePublicKey)) {
           const err = new Error('Handshake remote public key does not match in auth')
@@ -292,8 +291,10 @@ class Connection extends Duplex {
             this.remoteSessionPublicKey,
             this.sessionPublicKey
           )),
-          capabilities
         ])
+
+        const signature = unboxed.slice(32, 32 + 64)
+        const remoteCapabilities = unboxed.slice(32 + signature.length)
 
         verified = crypto.ed25519.verify(signature, proof, remotePublicKey)
 
@@ -304,7 +305,29 @@ class Connection extends Duplex {
           return
         }
 
+        const ours = new Set([ ...this.capabilities ])
+        const theirs = new Set()
+        const intersection = []
+
+        for (let i = 0; i < remoteCapabilities.length; i += 32) {
+          const capability = remoteCapabilities.slice(i, i + 32)
+          theirs.add(capability)
+          for (const c of [ ...ours ]) {
+            if (0 === Buffer.compare(c, capability)) {
+              intersection.push(capability)
+            }
+          }
+        }
+
+        if (0 === intersection.length) {
+          const err = new Error('Handshake failed capability check in auth')
+          if ('function' === typeof cb) { cb(err) }
+          else { this.emit('error', err) }
+          return
+        }
+
         this.emit('auth', {
+          capability: [ ...theirs ],
           publicKey: this.remotePublicKey,
           signature,
           verified,
@@ -444,11 +467,10 @@ class Connection extends Duplex {
         this.sessionPublicKey,
         this.remoteSessionPublicKey,
       )),
-      capabilities
     ])
 
     const signature = crypto.ed25519.sign(proof, secretKey)
-    const auth = Buffer.concat([ publicKey, signature ])
+    const auth = Buffer.concat([ publicKey, signature, capabilities ])
     const key = Buffer.concat([
       sharedKey,
       crypto.curve25519.shared(

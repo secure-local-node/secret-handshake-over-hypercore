@@ -1,4 +1,5 @@
 const { Connection } = require('./connection')
+const { capability } = require('./capability')
 const { keygen } = require('./keygen')
 
 function connect(sharedKey, opts, cb) {
@@ -10,6 +11,7 @@ function connect(sharedKey, opts, cb) {
 
 module.exports = {
   Connection,
+  capability,
   connect,
   keygen,
 }
