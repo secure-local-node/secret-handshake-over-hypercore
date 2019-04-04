@@ -27,7 +27,6 @@
     "ara-crypto": "^0.8.4",
     "batch": "^0.6.1",
     "debug": "^4.1.1",
-    "duplexify": "^4.0.0",
     "hypercore": "^6.25.2",
     "hypercore-crypto": "^1.0.0",
     "pump": "^3.0.0",
@@ -35,6 +34,6 @@
     "readable-stream": "^3.3.0"
   },
   "devDependencies": {
-    "through2": "^3.0.1"
+    "simple-websocket": "^7.2.0"
   }
 }

@@ -1,6 +1,5 @@
 const { Duplex } = require('readable-stream')
 const { keygen } = require('./keygen')
-const duplexify = require('duplexify')
 const hypercore = require('hypercore')
 const crypto = require('ara-crypto')
 const Batch = require('batch')
