@@ -1,5 +1,6 @@
 const { Duplex } = require('readable-stream')
 const { keygen } = require('./keygen')
+const increment = require('increment-buffer')
 const hypercore = require('hypercore')
 const crypto = require('ara-crypto')
 const Batch = require('batch')
@@ -123,7 +124,15 @@ class Connection extends Duplex {
   }
 
   _write(chunk, enc, done) {
-    this.sender.append(chunk, () => done(null))
+    if (this.encryptionKey) {
+      const key = this.encryptionKey
+      const nonce = increment(this.nonce)
+      const boxed = crypto.box(chunk, { key, nonce })
+      const signature = crypto.ed25519.sign(boxed, this.secretKey)
+      this.sender.append(Buffer.concat([ signature, boxed ]), done)
+    } else {
+      this.sender.append(chunk, done)
+    }
   }
 
   createHypercore(name, publicKey, opts) {
@@ -213,7 +222,21 @@ class Connection extends Duplex {
       if (err) {
         this.emit('error', err)
       } else if (buf && this[$reading]) {
-        this.push(buf)
+        if (this.encryptionKey && this.remoteNonce) {
+          const key = this.encryptionKey
+          const nonce = increment(this.remoteNonce)
+          const boxed = buf.slice(64)
+          const unboxed = crypto.unbox(boxed, { key, nonce })
+          const signature = buf.slice(0, 64)
+          if (crypto.ed25519.verify(signature, boxed, this.remotePublicKey)) {
+            this.push(unboxed)
+          } else {
+            err = new Error('Incoming message failed verification')
+            this.emit('error', err)
+          }
+        } else {
+          this.push(buf)
+        }
       }
 
       kick()
@@ -326,6 +349,8 @@ class Connection extends Duplex {
           return
         }
 
+        this.intersectionCapabilities = intersection.sort(Buffer.compare)
+
         this.emit('auth', {
           capability: [ ...theirs ],
           publicKey: this.remotePublicKey,
@@ -338,16 +363,24 @@ class Connection extends Duplex {
           const key = Buffer.concat([
             this.sharedKey,
             crypto.curve25519.shared(
-              this.publicKey,
-              this.remotePublicKey
+              this.sessionPublicKey,
+              this.remoteSessionPublicKey,
             ),
+            crypto.curve25519.shared(
+              this.sessionPublicKey,
+              this.remotePublicKey,
+            ),
+            crypto.curve25519.shared(
+              this.publicKey,
+              this.remoteSessionPublicKey,
+            )
           ])
 
           const proof = Buffer.concat([
             this.sharedKey,
             crypto.blake2b(crypto.curve25519.shared(
-              this.publicKey,
-              this.remotePublicKey,
+              this.sessionPublicKey,
+              this.remoteSessionPublicKey
             ))
           ])
 
@@ -369,6 +402,11 @@ class Connection extends Duplex {
           this.pause()
           this.stopReading()
 
+          this.encryptionKey = Buffer.concat([
+            key,
+            Buffer.concat(this.intersectionCapabilities)
+          ])
+
           const pending = new Batch()
           const stream = this[$stream]
 
@@ -377,12 +415,14 @@ class Connection extends Duplex {
           pending.push((next) => this.sender.close(() => next()))
 
           pending.push((next) => {
-            this[$sender] = this.createHypercore('sender', this.publicKey, {
-              storageCacheSize: 0,
-              storeSecretKey: false,
-              secretKey: this.secretKey,
-              sparse: true,
-            })
+            this[$sender] = this.createHypercore(
+              'sender',
+              this.sessionPublicKey, {
+                storageCacheSize: 0,
+                storeSecretKey: false,
+                secretKey: this.sessionSecretKey,
+                sparse: true,
+              })
 
             this.sender.ready(() => {
               this.emit('sender', this.sender)
@@ -403,7 +443,9 @@ class Connection extends Duplex {
               next()
             })
 
-            this[$receiver] = this.createHypercore('receiver', remotePublicKey, {
+            this[$receiver] = this.createHypercore(
+              'receiver',
+              this.remoteSessionPublicKey, {
               storageCacheSize: 0,
               sparse: true
             })
@@ -489,24 +531,35 @@ class Connection extends Duplex {
   }
 
   okay(auth) {
-    const { publicKey, secretKey, sharedKey, nonce } = this
     const remotePublicKey = auth.slice(0, 32)
     const signature = auth.slice(32)
+    const { nonce } = this
 
     const key = Buffer.concat([
-      sharedKey,
-      crypto.curve25519.shared(remotePublicKey, publicKey),
+      this.sharedKey,
+      crypto.curve25519.shared(
+        this.remoteSessionPublicKey,
+        this.sessionPublicKey,
+      ),
+      crypto.curve25519.shared(
+        this.remoteSessionPublicKey,
+        this.publicKey,
+      ),
+      crypto.curve25519.shared(
+        this.remotePublicKey,
+        this.sessionPublicKey,
+      )
     ])
 
     const proof = Buffer.concat([
-      sharedKey,
+      this.sharedKey,
       crypto.blake2b(crypto.curve25519.shared(
-        remotePublicKey,
-        publicKey,
+        this.remoteSessionPublicKey,
+        this.sessionPublicKey
       ))
     ])
 
-    const sig = crypto.ed25519.sign(proof, secretKey)
+    const sig = crypto.ed25519.sign(proof, this.secretKey)
     const box = crypto.box(sig, { key, nonce })
 
     process.nextTick(() => this.write(box))
