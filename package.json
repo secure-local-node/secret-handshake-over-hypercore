@@ -34,6 +34,7 @@
     "readable-stream": "^3.3.0"
   },
   "devDependencies": {
-    "simple-websocket": "^7.2.0"
+    "simple-websocket": "^7.2.0",
+    "tape": "^4.10.1"
   }
 }
