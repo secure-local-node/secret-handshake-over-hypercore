@@ -272,7 +272,7 @@ class Connection extends Duplex {
       }
 
       this.remoteSessionPublicKey = remoteSessionPublicKey
-      this.remoteNonce = mac.slice(0, 24)
+      this.remoteNonce = crypto.blake2b(mac, 24)
 
       this.emit('hello', {
         sessionKey: this.remoteSessionPublicKey,
@@ -488,7 +488,7 @@ class Connection extends Duplex {
     const mac = crypto.auth(publicKey, key)
     const buffer = Buffer.concat([ mac, sessionPublicKey ])
 
-    this.nonce = mac.slice(0, 24)
+    this.nonce = crypto.blake2b(mac, 24)
     process.nextTick(() => this.write(buffer))
   }
 
