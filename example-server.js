@@ -12,8 +12,8 @@ server.on('connection', (socket) => {
   global.bob = shh.connect(sharedKey, {
     connect: () => socket,
     capabilities: [
-      Buffer.from('09398de3daad336ec736af462388297d8abd7fe621168c35a4ec2a53b327c816', 'hex'),
-      Buffer.from('4a0d23babe9e616a66e21fe8a2377f6c8c1b885bb941211eb3a75505032057f6', 'hex'),
+      shh.capability('auth'),
+      shh.capability('read'),
     ]
   })
 
