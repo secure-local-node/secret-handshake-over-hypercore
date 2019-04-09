@@ -1,11 +1,13 @@
 const crypto = require('ara-crypto')
 
-function capability(name, shouldNormalize = true) {
-  return crypto.blake2b(Buffer.from(
-    shouldNormalize
-    ? normalize(name)
-    : name
-  ))
+function capability(name, key, shouldNormalize = true) {
+  if ('boolean' === typeof key) {
+    shouldNormalize = key
+    key = null
+  }
+
+  const buffer = Buffer.from(shouldNormalize ? normalize(name) : name)
+  return crypto.blake2b(buffer, 32, key)
 }
 
 function normalize(name) {
