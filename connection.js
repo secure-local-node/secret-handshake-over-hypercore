@@ -94,8 +94,35 @@ class Connection extends Duplex {
       sparse: true,
     })
 
+    if (true === opts.seal && 'function' === typeof Object.seal) {
+      Object.seal(this)
+    }
+
     this.feed.ready(() => {
       this.emit('feed', this.feed)
+    })
+
+    this.once('close', () => {
+      if (this.feed) {
+        this.feed.close()
+      }
+
+      if (this[$sender]) {
+        this[$sender].close()
+      }
+
+      if (this[$receiver]) {
+        this[$receiver].close()
+      }
+
+      this[$hasHandshake] = false
+      this[$receiver] = null
+      this[$reading] = false
+      this[$counter] = 0
+      this[$sender] = null
+      this[$stream] = null
+
+      this.feed = null
     })
   }
 
@@ -143,6 +170,14 @@ class Connection extends Duplex {
     return this.sender.replicate(opts)
   }
 
+  doWrite(buffer) {
+    process.nextTick(() => {
+      if (this.writable && !this.destroyed) {
+        this.write(buffer)
+      }
+    })
+  }
+
   connect(cb) {
     const { publicKey } = this
     const stream = this.feed.replicate({
@@ -153,22 +188,25 @@ class Connection extends Duplex {
     })
 
     const wire = this.createConnection(this)
-    const pipe = pump(wire, stream, wire, cb)
+    const pipe = wire ? pump(wire, stream, wire) : stream
 
     this.pause()
     this.cork()
 
-    this.emit('connection', wire, { publicKey })
-
-    this.sender.replicate({
-      download: false,
-      upload: true,
-      live: true,
-      stream,
-    })
+    if (wire) {
+      this.emit('connection', wire, { publicKey })
+    }
 
     stream.on('handshake', () => {
       const remotePublicKey = stream.remoteUserData
+
+      if (Buffer.isBuffer(this.remotePublicKey)) {
+        return
+      }
+
+      if (0 === Buffer.compare(this.publicKey, remotePublicKey)) {
+        return
+      }
 
       this.remotePublicKey = remotePublicKey
 
@@ -181,6 +219,13 @@ class Connection extends Duplex {
       this[$receiver] = this.createHypercore('receiver', remotePublicKey, {
         storageCacheSize: 0,
         sparse: true
+      })
+
+      this.sender.replicate({
+        download: false,
+        upload: true,
+        live: true,
+        stream,
       })
 
       this.receiver.ready(() => {
@@ -197,7 +242,7 @@ class Connection extends Duplex {
       this.uncork()
       this.resume()
       this.startReading()
-      this.handshake()
+      this.handshake(cb)
     })
 
     return pipe
@@ -209,11 +254,19 @@ class Connection extends Duplex {
 
   startReading() {
     const kick = () => {
+      if (!this.readable || this.destroyed) {
+        this.stopReading()
+      }
+
       if (this[$reading]) {
         const { receiver } = this
         debug('clear %d-%d', 0, this[$counter], receiver.length)
-        receiver.clear(this[$counter], () => {
-          receiver.get(this[$counter]++, { wait: true }, onread)
+        receiver.get(this[$counter]++, { wait: true }, (err, buf) => {
+          if (err) {
+            onread(err)
+          } else {
+            receiver.clear(this[$counter], (err) => onread(err, buf))
+          }
         })
       }
     }
@@ -342,7 +395,7 @@ class Connection extends Duplex {
           }
         }
 
-        if (0 === intersection.length) {
+        if (0 === intersection.length && ours.size) {
           const err = new Error('Handshake failed capability check in auth')
           if ('function' === typeof cb) { cb(err) }
           else { this.emit('error', err) }
@@ -462,7 +515,7 @@ class Connection extends Duplex {
             this[$hasHandshake] = true
             this[$counter] = 0
 
-            this.emit('handshake')
+            this.emit('handshake', this[$stream])
             this.resume()
             this.uncork()
             this.startReading()
@@ -489,7 +542,7 @@ class Connection extends Duplex {
     const buffer = Buffer.concat([ mac, sessionPublicKey ])
 
     this.nonce = crypto.blake2b(mac, 24)
-    process.nextTick(() => this.write(buffer))
+    this.doWrite(buffer)
   }
 
   auth() {
@@ -527,7 +580,7 @@ class Connection extends Duplex {
 
     const box = crypto.box(auth, { nonce, key })
 
-    process.nextTick(() => this.write(box))
+    this.doWrite(box)
   }
 
   okay(auth) {
@@ -562,7 +615,7 @@ class Connection extends Duplex {
     const sig = crypto.ed25519.sign(proof, this.secretKey)
     const box = crypto.box(sig, { key, nonce })
 
-    process.nextTick(() => this.write(box))
+    this.doWrite(box)
   }
 }
 
