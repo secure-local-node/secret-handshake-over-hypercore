@@ -4,7 +4,7 @@ const { keygen } = require('./keygen')
 
 function connect(sharedKey, opts, cb) {
   const connection = new Connection(Object.assign({ sharedKey }, opts))
-  connection.connect(cb)
+  process.nextTick(() => connection.connect(cb))
   return connection
 }
 
