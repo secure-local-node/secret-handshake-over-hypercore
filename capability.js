@@ -11,6 +11,8 @@ function capability(name, shouldNormalize = true) {
 function normalize(name) {
   if ('string' === typeof name) {
     return name.trim().replace(/[\s|\n|\t|\r]+/g, '')
+  } else {
+    return name
   }
 }
 
