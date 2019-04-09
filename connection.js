@@ -48,6 +48,7 @@ class Connection extends Duplex {
     this.sessionSecretKey = sessionKeyPair.secretKey
 
     this.sharedKey = opts.sharedKey
+    this.feedKey = crypto.blake2b(this.sharedKey)
 
     if (Array.isArray(opts.capabilities)) {
       this.capabilities = opts.capabilities
@@ -82,7 +83,7 @@ class Connection extends Duplex {
     this[$counter] = 0
     this[$stream] = null
 
-    this.feed = this.createHypercore('feed', this.sharedKey, {
+    this.feed = this.createHypercore('feed', this.feedKey, {
       storageCacheSize: 0,
       sparse: true
     })
@@ -312,7 +313,10 @@ class Connection extends Duplex {
 
       const key = crypto.curve25519.shared(
         this.sharedKey,
-        crypto.curve25519.shared(this.publicKey, remoteSessionPublicKey)
+        crypto.curve25519.shared(
+          this.publicKey,
+          remoteSessionPublicKey
+        )
       )
 
       let verified = crypto.auth.verify(mac, this.remotePublicKey, key)
