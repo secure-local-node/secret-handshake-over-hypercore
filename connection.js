@@ -37,7 +37,12 @@ class Connection extends Duplex {
       this.secretKey = secretKey
     }
 
-    this.createConnection = opts.connect
+    if (opts.stream && !opts.connect) {
+      this.createConnection = () => opts.stream
+    } else {
+      this.createConnection = opts.connect
+    }
+
     this.createStorage = opts.storage || (() => ram)
 
     this.remoteSessionPublicKey = null
@@ -188,7 +193,10 @@ class Connection extends Duplex {
       live: true,
     })
 
-    const wire = this.createConnection(this)
+    const wire = 'function' === typeof this.createConnection
+      ? this.createConnection(this)
+      : this.createConnection
+
     const pipe = wire ? pump(wire, stream, wire) : stream
 
     this.pause()
