@@ -381,21 +381,16 @@ class Connection extends Duplex {
           return
         }
 
-        const ours = new Set([ ...this.capabilities ])
-        const theirs = new Set()
         const intersection = []
 
         for (let i = 0; i < remoteCapabilities.length; i += 32) {
           const capability = remoteCapabilities.slice(i, i + 32)
-          theirs.add(capability)
-          for (const c of [ ...ours ]) {
-            if (0 === Buffer.compare(c, capability)) {
-              intersection.push(capability)
-            }
+          if (capabilities.indexOf(capability) > -1) {
+            intersection.push(capability)
           }
         }
 
-        if (0 === intersection.length && ours.size) {
+        if (0 === intersection.length && capabilities.length) {
           const err = new Error('Handshake failed capability check in auth')
           if ('function' === typeof cb) { cb(err) }
           else { this.emit('error', err) }
@@ -405,7 +400,7 @@ class Connection extends Duplex {
         this.intersectionCapabilities = intersection.sort(Buffer.compare)
 
         this.emit('auth', {
-          capability: [ ...theirs ],
+          capabilities: [ ...intersection ],
           publicKey: this.remotePublicKey,
           signature,
           verified,
