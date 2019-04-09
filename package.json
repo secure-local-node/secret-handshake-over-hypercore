@@ -4,7 +4,7 @@
   "description": "Tarr's Secret Handshake over a shared encrypted Hypercore feed",
   "main": "index.js",
   "scripts": {
-    "test": "tape test"
+    "test": "tape test.js"
   },
   "keywords": [
     "tarr",
@@ -29,12 +29,14 @@
     "debug": "^4.1.1",
     "hypercore": "^6.25.2",
     "hypercore-crypto": "^1.0.0",
+    "increment-buffer": "^1.0.1",
     "pump": "^3.0.0",
     "random-access-memory": "^3.1.1",
     "readable-stream": "^3.3.0"
   },
   "devDependencies": {
     "simple-websocket": "^7.2.0",
-    "tape": "^4.10.1"
+    "tape": "^4.10.1",
+    "through2": "^3.0.1"
   }
 }
