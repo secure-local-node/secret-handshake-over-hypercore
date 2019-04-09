@@ -24,7 +24,7 @@
   },
   "homepage": "https://github.com/secure-local-node/secret-handshake-over-hypercore#readme",
   "dependencies": {
-    "ara-crypto": "^0.8.4",
+    "ara-crypto": "^0.8.5",
     "batch": "^0.6.1",
     "debug": "^4.1.1",
     "hypercore": "^6.25.2",
