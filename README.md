@@ -77,6 +77,14 @@ TODO
 
 TODO
 
+### `shh.keygen()`
+
+TODO
+
+### `shh.Connection(opts)`
+
+TODO
+
 ## License
 
 MIT
