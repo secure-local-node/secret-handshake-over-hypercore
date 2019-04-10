@@ -8,6 +8,7 @@ const socket = new Socket('ws://localhost:3000')
 
 socket.on('connect', () => {
   global.alice = shh.connect(sharedKey, {
+    preserveSender: true,
     connect: () => socket,
     capabilities: [
       shh.capability('auth'),
@@ -19,8 +20,7 @@ socket.on('connect', () => {
   alice.on('handshake', () => {
     console.log('alice handshake')
     alice.write('hello bob')
-    alice.on('readable', () => {
-      console.log('%s', alice.read().toString())
-    })
+    alice.on('data', (b) => console.log(b.toString()))
+    alice.sender.get(0, console.log)
   })
 })

@@ -22,8 +22,6 @@ server.on('connection', (socket) => {
     console.log('bob handshake')
     bob.write('hello alice!!!')
 
-    bob.on('readable', () => {
-      console.log('%s', bob.read().toString())
-    })
+    bob.on('data', (buf) => console.log(buf.toString()))
   })
 })
