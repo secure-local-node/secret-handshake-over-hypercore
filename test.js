@@ -26,8 +26,7 @@ test('shh.connect(sharedKey, opts)', (t) => {
 
   t.throws(() => shh.connect(), Error)
   t.throws(() => shh.connect(null), Error)
-  t.throws(() => shh.connect(sharedKey), Error)
-  t.throws(() => shh.connect(sharedKey, {}), Error)
+  t.throws(() => shh.connect(sharedKey, { connect: {} }), Error)
   t.throws(() => shh.connect(sharedKey, { connect: null }), Error)
 
   const stream = shh.connect(sharedKey, { connect })
