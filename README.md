@@ -335,7 +335,7 @@ Capabilities are created with the `shh.capability()` function.
 Capabilities are 32 byte BLAKE2b hashes of the input given to the
 function.
 
-```js
+```
 > shh.capability('auth')
 <Buffer f4 77 ca 2d 48 ad 0a 39 77 8a f2 86 e1 2b 90 8d a8 53 12 cb 0b e4 e1 f8 c8 eb c0 fd 2e d4 1c af>
 ```
