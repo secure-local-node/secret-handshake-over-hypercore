@@ -10,6 +10,8 @@ const ram = require('random-access-memory')
 
 const $encryptionKey = Symbol('encryptionKey')
 const $hasHandshake = Symbol('hasHandshake')
+const $connecting = Symbol('connecting')
+const $connected = Symbol('connected')
 const $receiver = Symbol('receiver')
 const $reading = Symbol('reading')
 const $counter = Symbol('counter')
@@ -25,7 +27,7 @@ class Connection extends Duplex {
   static get RX() { return 'rx' }
 
   constructor(opts) {
-    super()
+    super(Object.assign({ emitClose: true }, opts))
     this.setMaxListeners(0)
 
     if (undefined !== opts.connect && 'function' !== typeof opts.connect) {
@@ -45,7 +47,7 @@ class Connection extends Duplex {
       this.secretKey = secretKey
     }
 
-    if (opts.stream && !opts.connect) {
+    if (opts.stream) {
       this.createConnection = () => opts.stream
     } else if ('function' === typeof opts.connect) {
       this.createConnection = opts.connect
@@ -55,6 +57,7 @@ class Connection extends Duplex {
 
     this.preserveReceiver = Boolean(opts.preserveReceiver)
     this.preserveSender = Boolean(opts.preserveSender)
+    this.allowHalfOpen = Boolean(opts.allowHalfOpen)
 
     this.createStorage = opts.storage || (() => ram)
 
@@ -97,6 +100,8 @@ class Connection extends Duplex {
 
     this[$encryptionKey] = null
     this[$hasHandshake] = false
+    this[$connecting] = false
+    this[$connected] = false
     this[$receiver] = null
     this[$reading] = false
     this[$counter] = 0
@@ -122,10 +127,6 @@ class Connection extends Duplex {
       }
     )
 
-    if (true === opts.seal && 'function' === typeof Object.seal) {
-      Object.seal(this)
-    }
-
     this.feed.ready(() => {
       this.emit(Connection.FEED, this.feed)
     })
@@ -135,19 +136,9 @@ class Connection extends Duplex {
     })
 
     this.once('close', () => {
-      if (this.feed) {
-        this.feed.close()
-      }
-
-      if (this[$sender]) {
-        this[$sender].close()
-      }
-
-      if (this[$receiver]) {
-        this[$receiver].close()
-      }
-
       this[$hasHandshake] = false
+      this[$connecting] = false
+      this[$connected] = false
       this[$receiver] = null
       this[$reading] = false
       this[$counter] = 0
@@ -167,6 +158,14 @@ class Connection extends Duplex {
 
   get hasHandshake() {
     return this[$hasHandshake]
+  }
+
+  get connecting() {
+    return this[$connecting]
+  }
+
+  get connected() {
+    return this[$connected]
   }
 
   get reading() {
@@ -191,7 +190,7 @@ class Connection extends Duplex {
 
   _write(chunk, enc, done) {
     const { sender } = this
-    if (this.encryptionKey) {
+    if (this.encryptionKey && this.writable && !this.destroyed) {
       const key = crypto.kdf.derive(this.encryptionKey, this.sender.length + 1)
       const nonce = increment(this.nonce)
       const boxed = crypto.box(chunk, { key, nonce })
@@ -202,25 +201,57 @@ class Connection extends Duplex {
     }
   }
 
+  _destroy(err, done) {
+    if (err && err.message) {
+      this.emit('error', err)
+    }
+
+    const batch = new Batch()
+    this.stopReading()
+
+    if (this[$stream]) {
+      batch.push((done) => this[$stream].once('close', done).destroy())
+    }
+
+    if (this.feed) {
+      this.feed.cancel(this.feed.length)
+      batch.push((done) => this.feed.close(done))
+    }
+
+    if (this.sender) {
+      this.sender.cancel(this.sender.length)
+      batch.push((done) => this.sender.close(done))
+    }
+
+    if (this.receiver) {
+      this.receiver.cancel(this.receiver.length)
+      batch.push((done) => this.receiver.close(done))
+    }
+
+    batch.end((err) => {
+      if (err) {
+        done(err)
+      } else {
+        process.nextTick(done)
+      }
+    })
+  }
+
   createHypercore(name, publicKey, opts) {
     const core = hypercore(this.createStorage(name), publicKey, opts)
     return Object.assign(core, { [$name]: name })
   }
 
-  replicate(opts) {
-    return this.sender.replicate(opts)
-  }
-
-  doWrite(buffer) {
+  doWrite(buffer, cb) {
     process.nextTick(() => {
       if (this.writable && !this.destroyed) {
-        this.sender.append(buffer)
+        this.sender.append(buffer, cb)
       }
     })
   }
 
   connect(cb) {
-    const { publicKey } = this
+    const { sessionPublicKey, publicKey } = this
     const stream = this.feed.replicate({
       userData: publicKey,
       download: false,
@@ -232,9 +263,30 @@ class Connection extends Duplex {
       ? this.createConnection(this)
       : this.createConnection
 
-    const pipe = wire ? pump(wire, stream, wire) : stream
+    const pipe = wire ? pump(stream, wire, stream) : stream
 
-    this.emit('connect', pipe, { publicKey })
+    this[$connecting] = true
+
+    stream.on('feed', (discoveryKey) => {
+      const { remotePublicKey } = this
+      if (!this.connecting) { return }
+      if (0 == Buffer.compare(discoveryKey, this.feed.discoveryKey)) {
+        return
+      }
+      if (
+        Buffer.isBuffer(remotePublicKey) &&
+        0 === Buffer.compare(this.receiver.discoveryKey, discoveryKey)
+      ) {
+        this[$connecting] = false
+        this[$connected] = true
+        this.emit('connect', pipe, {
+          sessionPublicKey,
+          remotePublicKey,
+          discoveryKey,
+          publicKey,
+        })
+      }
+    })
 
     stream.on('handshake', () => {
       const remotePublicKey = stream.remoteUserData
@@ -252,7 +304,7 @@ class Connection extends Duplex {
       this.emit('hypercore-handshake', {
         remotePublicKey,
         publicKey,
-      })
+      }, stream)
 
       this[$stream] = stream
       this[$receiver] = this.createHypercore(
@@ -318,7 +370,10 @@ class Connection extends Duplex {
 
     const onread = (err, buf) => {
       if (err) {
-        this.emit('error', err)
+        this.stopReading()
+        if (!err.message.toLowerCase().match(/request cancelled/)) {
+          this.emit('error', err)
+        }
       } else if (buf && this[$reading]) {
         if (this.encryptionKey && this.remoteNonce) {
           const key = crypto.kdf.derive(this.encryptionKey, this.counter)
@@ -380,8 +435,8 @@ class Connection extends Duplex {
       this.remoteNonce = crypto.blake2b(mac, 24)
 
       this.emit('hello', {
-        sessionKey: this.remoteSessionPublicKey,
-        publicKey: this.remotePublicKey,
+        remoteSessionPublicKey: this.remoteSessionPublicKey,
+        remotePublicKey: this.remotePublicKey,
         verified,
         mac,
       })
@@ -449,11 +504,12 @@ class Connection extends Duplex {
           return
         }
 
-        this.intersectionCapabilities = intersection.sort(Buffer.compare)
+        this.sessionCapabilities = intersection.sort(Buffer.compare)
 
         this.emit('auth', {
-          capabilities: intersection,
-          publicKey: this.remotePublicKey,
+          remoteSessionPublicKey: this.remoteSessionPublicKey,
+          sessionCapabilities: this.sessionCapabilities,
+          remotePublicKey: this.remotePublicKey,
           signature,
           verified,
           proof,
@@ -505,13 +561,12 @@ class Connection extends Duplex {
 
           this[$encryptionKey] = Buffer.concat([
             key,
-            Buffer.concat(this.intersectionCapabilities)
+            Buffer.concat(this.sessionCapabilities)
           ])
 
           const pending = new Batch()
           const stream = this[$stream]
 
-          pending.concurrency(1)
           pending.push((next) => this.receiver.close(() => next()))
           pending.push((next) => this.sender.close(() => next()))
 
@@ -573,7 +628,7 @@ class Connection extends Duplex {
             this[$hasHandshake] = true
             this[$counter] = 0
 
-            this.emit('handshake', this[$stream])
+            this.emit('handshake', this)
             this.resume()
             this.uncork()
             this.startReading()
