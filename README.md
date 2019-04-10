@@ -141,6 +141,7 @@ to and read from safely after the `'handshake'` event has been emitted.
 The constructor accepts a single argument `opts` where:
 
 <a name="connection-opts" />
+
 * `opts.sharedKey` A **required** 32 byte buffer containing a
   unique shared secret key.
 * `opts.publicKey` An optional public key for the identity initiating
