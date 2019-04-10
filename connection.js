@@ -8,19 +8,27 @@ const debug = require('debug')('secret-handshake-over-hypercore:connection')
 const pump = require('pump')
 const ram = require('random-access-memory')
 
+const $encryptionKey = Symbol('encryptionKey')
 const $hasHandshake = Symbol('hasHandshake')
 const $receiver = Symbol('receiver')
 const $reading = Symbol('reading')
 const $counter = Symbol('counter')
 const $sender = Symbol('sender')
 const $stream = Symbol('stream')
+const $name = Symbol('name')
 
 class Connection extends Duplex {
+  static get FEED() { return 'feed' }
+  static get TXI() { return 'txi' }
+  static get RXI() { return 'rxi' }
+  static get TX() { return 'tx' }
+  static get RX() { return 'rx' }
+
   constructor(opts) {
     super()
     this.setMaxListeners(0)
 
-    if ('function' !== typeof opts.connect) {
+    if (undefined !== opts.connect && 'function' !== typeof opts.connect) {
       throw new TypeError('Connection expects a opts.connect(...) factory')
     }
 
@@ -39,9 +47,14 @@ class Connection extends Duplex {
 
     if (opts.stream && !opts.connect) {
       this.createConnection = () => opts.stream
-    } else {
+    } else if ('function' === typeof opts.connect) {
       this.createConnection = opts.connect
+    } else {
+      this.createConnection = null
     }
+
+    this.preserveReceiver = Boolean(opts.preserveReceiver)
+    this.preserveSender = Boolean(opts.preserveSender)
 
     this.createStorage = opts.storage || (() => ram)
 
@@ -82,30 +95,43 @@ class Connection extends Duplex {
       .filter(Buffer.isBuffer)
       .sort(Buffer.compare)
 
+    this[$encryptionKey] = null
     this[$hasHandshake] = false
     this[$receiver] = null
     this[$reading] = false
     this[$counter] = 0
     this[$stream] = null
 
-    this.feed = this.createHypercore('feed', this.feedKey, {
-      storageCacheSize: 0,
-      sparse: true
-    })
+    this.feed = this.createHypercore(
+      Connection.FEED,
+      this.feedKey,
+      {
+        storageCacheSize: 0,
+        sparse: true
+      }
+    )
 
-    this[$sender] = this.createHypercore('sender', this.publicKey, {
-      storageCacheSize: 0,
-      storeSecretKey: false,
-      secretKey: this.secretKey,
-      sparse: true,
-    })
+    this[$sender] = this.createHypercore(
+      Connection.TXI,
+      this.publicKey,
+      {
+        storageCacheSize: 0,
+        storeSecretKey: false,
+        secretKey: this.secretKey,
+        sparse: true,
+      }
+    )
 
     if (true === opts.seal && 'function' === typeof Object.seal) {
       Object.seal(this)
     }
 
     this.feed.ready(() => {
-      this.emit('feed', this.feed)
+      this.emit(Connection.FEED, this.feed)
+    })
+
+    this.sender.ready(() => {
+      this.emit(Connection.TXI, this.sender)
     })
 
     this.once('close', () => {
@@ -130,6 +156,13 @@ class Connection extends Duplex {
 
       this.feed = null
     })
+
+    this.cork()
+    this.pause()
+  }
+
+  get encryptionKey() {
+    return this[$encryptionKey]
   }
 
   get hasHandshake() {
@@ -157,19 +190,21 @@ class Connection extends Duplex {
   }
 
   _write(chunk, enc, done) {
+    const { sender } = this
     if (this.encryptionKey) {
-      const key = this.encryptionKey
+      const key = crypto.kdf.derive(this.encryptionKey, this.sender.length + 1)
       const nonce = increment(this.nonce)
       const boxed = crypto.box(chunk, { key, nonce })
       const signature = crypto.ed25519.sign(boxed, this.secretKey)
       this.sender.append(Buffer.concat([ signature, boxed ]), done)
     } else {
-      this.sender.append(chunk, done)
+      done()
     }
   }
 
   createHypercore(name, publicKey, opts) {
-    return hypercore(this.createStorage(name), publicKey, opts)
+    const core = hypercore(this.createStorage(name), publicKey, opts)
+    return Object.assign(core, { [$name]: name })
   }
 
   replicate(opts) {
@@ -179,7 +214,7 @@ class Connection extends Duplex {
   doWrite(buffer) {
     process.nextTick(() => {
       if (this.writable && !this.destroyed) {
-        this.write(buffer)
+        this.sender.append(buffer)
       }
     })
   }
@@ -199,12 +234,7 @@ class Connection extends Duplex {
 
     const pipe = wire ? pump(wire, stream, wire) : stream
 
-    this.pause()
-    this.cork()
-
-    if (wire) {
-      this.emit('connection', wire, { publicKey })
-    }
+    this.emit('connect', pipe, { publicKey })
 
     stream.on('handshake', () => {
       const remotePublicKey = stream.remoteUserData
@@ -225,10 +255,14 @@ class Connection extends Duplex {
       })
 
       this[$stream] = stream
-      this[$receiver] = this.createHypercore('receiver', remotePublicKey, {
-        storageCacheSize: 0,
-        sparse: true
-      })
+      this[$receiver] = this.createHypercore(
+        Connection.RXI,
+        remotePublicKey,
+        {
+          storageCacheSize: 0,
+          sparse: true
+        }
+      )
 
       this.sender.replicate({
         download: false,
@@ -238,7 +272,7 @@ class Connection extends Duplex {
       })
 
       this.receiver.ready(() => {
-        this.emit('receiver', this.receiver)
+        this.emit(Connection.RXI, this.receiver)
 
         this.receiver.replicate({
           download: true,
@@ -270,11 +304,13 @@ class Connection extends Duplex {
       if (this[$reading]) {
         const { receiver } = this
         debug('clear %d-%d', 0, this[$counter], receiver.length)
-        receiver.get(this[$counter]++, { wait: true }, (err, buf) => {
+        receiver.get(this[$counter], { wait: true }, (err, buf) => {
           if (err) {
             onread(err)
+          } else if (true !== this.preserveReceiver) {
+            receiver.clear(++this[$counter], (err) => onread(err, buf))
           } else {
-            receiver.clear(this[$counter], (err) => onread(err, buf))
+            onread(null, buf)
           }
         })
       }
@@ -285,15 +321,19 @@ class Connection extends Duplex {
         this.emit('error', err)
       } else if (buf && this[$reading]) {
         if (this.encryptionKey && this.remoteNonce) {
-          const key = this.encryptionKey
+          const key = crypto.kdf.derive(this.encryptionKey, this.counter)
           const nonce = increment(this.remoteNonce)
           const boxed = buf.slice(64)
-          const unboxed = crypto.unbox(boxed, { key, nonce })
           const signature = buf.slice(0, 64)
-          if (crypto.ed25519.verify(signature, boxed, this.remotePublicKey)) {
-            this.push(unboxed)
-          } else {
-            err = new Error('Incoming message failed verification')
+          try {
+            const unboxed = crypto.unbox(boxed, { key, nonce })
+            if (crypto.ed25519.verify(signature, boxed, this.remotePublicKey)) {
+              this.push(unboxed)
+            } else {
+              err = new Error('Incoming message failed verification')
+              this.emit('error', err)
+            }
+          } catch (err) {
             this.emit('error', err)
           }
         } else {
@@ -412,10 +452,11 @@ class Connection extends Duplex {
         this.intersectionCapabilities = intersection.sort(Buffer.compare)
 
         this.emit('auth', {
-          capabilities: [ ...intersection ],
+          capabilities: intersection,
           publicKey: this.remotePublicKey,
           signature,
           verified,
+          proof,
         })
 
         this.okay(unboxed)
@@ -462,7 +503,7 @@ class Connection extends Duplex {
           this.pause()
           this.stopReading()
 
-          this.encryptionKey = Buffer.concat([
+          this[$encryptionKey] = Buffer.concat([
             key,
             Buffer.concat(this.intersectionCapabilities)
           ])
@@ -476,16 +517,24 @@ class Connection extends Duplex {
 
           pending.push((next) => {
             this[$sender] = this.createHypercore(
-              'sender',
-              this.sessionPublicKey, {
+              Connection.TX,
+              this.sessionPublicKey,
+              {
                 storageCacheSize: 0,
                 storeSecretKey: false,
                 secretKey: this.sessionSecretKey,
                 sparse: true,
-              })
+              }
+            )
+
+            this.sender.on('upload', (index) => {
+              if (true !== this.preserveSender) {
+                this.sender.clear(index)
+              }
+            })
 
             this.sender.ready(() => {
-              this.emit('sender', this.sender)
+              this.emit(Connection.TX, this.sender)
               next()
             })
 
@@ -498,16 +547,18 @@ class Connection extends Duplex {
           })
 
           pending.push((next) => {
-            this.receiver.ready(() => {
-              this.emit('receiver', this.receiver)
-              next()
-            })
-
             this[$receiver] = this.createHypercore(
-              'receiver',
-              this.remoteSessionPublicKey, {
-              storageCacheSize: 0,
-              sparse: true
+              Connection.RX,
+              this.remoteSessionPublicKey,
+              {
+                storageCacheSize: 0,
+                sparse: true
+              }
+            )
+
+            this.receiver.ready(() => {
+              this.emit(Connection.RX, this.receiver)
+              next()
             })
 
             this.receiver.replicate({
