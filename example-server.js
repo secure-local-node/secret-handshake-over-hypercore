@@ -8,6 +8,7 @@ const sharedKey = Buffer.from('12abf5a9165201b0d5f284d7d902f57b19ca0a6f974bcd8fc
 
 const server = new Server({ port: 3000 })
 
+server.setMaxListeners(0)
 server.on('connection', (socket) => {
   global.bob = shh.connect(sharedKey, {
     connect: () => socket,
