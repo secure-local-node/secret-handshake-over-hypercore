@@ -58,7 +58,7 @@ test('alice <> bob without capabilities', (t) => {
     read() { },
     write(chunk, enc, done) {
       server.push(chunk)
-      done()
+      done(null)
     }
   })
 
@@ -78,7 +78,9 @@ test('alice <> bob without capabilities', (t) => {
       t.pass('alice closed') // 3
     })
 
-    t.ok(alice.write('hello bob'), 'alice writes to bob') // 4
+    process.nextTick(() => {
+      t.ok(alice.write('hello bob'), 'alice writes to bob') // 4
+    })
   })
 
   bob.on('handshake', (stream) => {
@@ -94,6 +96,8 @@ test('alice <> bob without capabilities', (t) => {
       t.pass('bob closed') // 7
     })
 
-    t.ok(bob.write('hello alice'), 'bob writes to alice') // 8
+    process.nextTick(() => {
+      t.ok(bob.write('hello alice'), 'bob writes to alice') // 8
+    })
   })
 })
