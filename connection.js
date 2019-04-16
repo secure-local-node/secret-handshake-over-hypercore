@@ -632,6 +632,9 @@ class Connection extends Duplex {
             this.resume()
             this.uncork()
             this.startReading()
+            if ('function' === typeof cb) {
+              cb(null)
+            }
           })
         })
       })
