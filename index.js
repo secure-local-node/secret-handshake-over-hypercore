@@ -8,7 +8,6 @@ function connect(sharedKey, opts, cb) {
   return connection
 }
 
-
 module.exports = {
   Connection,
   capability,
