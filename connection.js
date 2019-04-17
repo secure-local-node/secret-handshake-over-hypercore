@@ -733,6 +733,21 @@ class Connection extends Duplex {
 
     this.doWrite(box)
   }
+
+  close(cb) {
+    if (this[$sender]) {
+      this[$sender].close()
+    }
+    if (this[$stream]) {
+      this[$stream].destroy()
+    }
+
+    if (this.feed) {
+      this.feed.close()
+    }
+    
+    this.emit('close', cb)
+  }
 }
 
 module.exports = {
