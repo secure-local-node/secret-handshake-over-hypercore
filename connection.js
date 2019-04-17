@@ -735,18 +735,11 @@ class Connection extends Duplex {
   }
 
   close(cb) {
-    if (this[$sender]) {
-      this[$sender].close()
-    }
-    if (this[$stream]) {
-      this[$stream].destroy()
-    }
+    this.destroy()
 
-    if (this.feed) {
-      this.feed.close()
+    if ('function' === typeof cb) {
+      cb(null)
     }
-    
-    this.emit('close', cb)
   }
 }
 
