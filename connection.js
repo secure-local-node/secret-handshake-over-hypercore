@@ -438,6 +438,8 @@ class Connection extends Duplex {
         } catch (err) {
           return this.destroy(err)
         }
+      } else {
+        this.destroy(err)
       }
     }
 
