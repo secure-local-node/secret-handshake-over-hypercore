@@ -265,6 +265,11 @@ class Connection extends Duplex {
 
     const pipe = wire ? pump(stream, wire, stream) : stream
 
+    wire.on('close', () => {
+      this.destroy()
+      stream.destroy()
+    })
+
     this[$connecting] = true
 
     stream.on('feed', (discoveryKey) => {
