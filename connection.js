@@ -136,6 +136,10 @@ class Connection extends Duplex {
     })
 
     this.once('close', () => {
+      if (false === this.hasHandshake && this.connected) {
+        this.emit('error', new Error('Authentication failed in handshake'))
+      }
+
       this[$hasHandshake] = false
       this[$connecting] = false
       this[$connected] = false
@@ -427,6 +431,18 @@ class Connection extends Duplex {
   }
 
   handshake(cb) {
+    const onerror = (err) => {
+      if ('function' === typeof cb) {
+        try {
+          cb(err)
+        } catch (err) {
+          return this.destroy(err)
+        }
+      }
+    }
+
+    this.once('handshake', () => this.removeListener('error', onerror))
+    this.once('error', onerror)
     this.hello()
     this.once('data', (buf) => {
       const mac = buf.slice(0, 32)
