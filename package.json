@@ -1,6 +1,6 @@
 {
   "name": "secret-handshake-over-hypercore",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Tarr's Secret Handshake over a shared encrypted Hypercore feed",
   "main": "index.js",
   "scripts": {
